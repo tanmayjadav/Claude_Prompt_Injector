@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=DM+Sans:wght@400;500;600;700&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --bg: #0f1117;
+      --surface: #1a1d27;
+      --surface-2: #242837;
+      --border: #2e3345;
+      --text: #e4e6ef;
+      --text-dim: #8b90a5;
+      --accent: #d4a04a;
+      --accent-dim: #b8872e;
+      --green: #3fb950;
+      --red: #f85149;
+      --blue: #58a6ff;
+    }
+
+    body {
+      width: 420px;
+      max-height: 580px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'DM Sans', sans-serif;
+      font-size: 13px;
+      overflow-y: auto;
+    }
+
+    /* ── Header ── */
+    .header {
+      padding: 16px 18px 12px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .header-icon {
+      width: 28px; height: 28px;
+      background: var(--accent);
+      border-radius: 6px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 14px; font-weight: 700; color: var(--bg);
+    }
+    .header h1 {
+      font-size: 15px; font-weight: 700; letter-spacing: -0.3px;
+    }
+    .header .version {
+      margin-left: auto;
+      font-size: 10px; color: var(--text-dim);
+      background: var(--surface-2); padding: 2px 7px; border-radius: 4px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+
+    /* ── Tabs ── */
+    .tabs {
+      display: flex; border-bottom: 1px solid var(--border);
+    }
+    .tab {
+      flex: 1; padding: 10px; text-align: center;
+      font-size: 12px; font-weight: 600; color: var(--text-dim);
+      cursor: pointer; border-bottom: 2px solid transparent;
+      transition: all 0.2s;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+    /* ── Panels ── */
+    .panel { display: none; padding: 14px 18px 18px; }
+    .panel.active { display: block; }
+
+    /* ── Form elements ── */
+    label {
+      display: block; font-size: 11px; font-weight: 600;
+      color: var(--text-dim); text-transform: uppercase;
+      letter-spacing: 0.5px; margin-bottom: 6px;
+    }
+    textarea, input[type="number"] {
+      width: 100%; background: var(--surface);
+      border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); padding: 10px 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px; resize: vertical;
+      outline: none; transition: border-color 0.2s;
+    }
+    textarea:focus, input:focus { border-color: var(--accent); }
+
+    .countries-input { height: 100px; }
+    .prompt-input { height: 180px; font-size: 11px; }
+    .delay-input { width: 80px; }
+
+    .field { margin-bottom: 14px; }
+    .field-row { display: flex; gap: 12px; align-items: flex-end; }
+
+    .hint {
+      font-size: 10px; color: var(--text-dim);
+      margin-top: 4px; font-style: italic;
+    }
+
+    /* ── Buttons ── */
+    .btn {
+      padding: 10px 16px; border-radius: 6px;
+      font-family: 'DM Sans', sans-serif;
+      font-size: 12px; font-weight: 600;
+      cursor: pointer; border: none;
+      transition: all 0.15s; display: inline-flex;
+      align-items: center; gap: 6px;
+    }
+    .btn-primary {
+      background: var(--accent); color: var(--bg); width: 100%;
+      justify-content: center;
+    }
+    .btn-primary:hover { background: var(--accent-dim); }
+    .btn-primary:disabled {
+      opacity: 0.4; cursor: not-allowed;
+    }
+    .btn-secondary {
+      background: var(--surface-2); color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover { background: var(--border); }
+    .btn-danger {
+      background: transparent; color: var(--red);
+      border: 1px solid var(--red);
+    }
+    .btn-danger:hover { background: rgba(248,81,73,0.1); }
+    .btn-small { padding: 6px 10px; font-size: 11px; }
+
+    .btn-row { display: flex; gap: 8px; margin-top: 14px; }
+
+    /* ── Status ── */
+    .status-bar {
+      padding: 12px 18px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      font-size: 11px;
+    }
+    .status-idle { color: var(--text-dim); }
+    .status-running { color: var(--blue); }
+    .status-done { color: var(--green); }
+    .status-error { color: var(--red); }
+
+    .progress {
+      margin-top: 8px; display: flex; align-items: center; gap: 10px;
+    }
+    .progress-bar {
+      flex: 1; height: 4px; background: var(--surface-2);
+      border-radius: 2px; overflow: hidden;
+    }
+    .progress-fill {
+      height: 100%; background: var(--accent);
+      border-radius: 2px; transition: width 0.3s;
+    }
+    .progress-text {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px; color: var(--text-dim); white-space: nowrap;
+    }
+
+    /* ── Country list in run panel ── */
+    .country-queue {
+      margin: 10px 0; max-height: 120px; overflow-y: auto;
+    }
+    .country-item {
+      display: flex; align-items: center; gap: 8px;
+      padding: 5px 8px; border-radius: 4px; font-size: 12px;
+      font-family: 'JetBrains Mono', monospace;
+    }
+    .country-item:nth-child(odd) { background: var(--surface); }
+    .ci-pending { color: var(--text-dim); }
+    .ci-active { color: var(--blue); font-weight: 600; }
+    .ci-done { color: var(--green); }
+    .ci-dot {
+      width: 6px; height: 6px; border-radius: 50%;
+      background: var(--text-dim); flex-shrink: 0;
+    }
+    .ci-active .ci-dot { background: var(--blue); animation: pulse 1s infinite; }
+    .ci-done .ci-dot { background: var(--green); }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.3; }
+    }
+
+    /* ── Saved indicator ── */
+    .saved-flash {
+      position: fixed; top: 10px; right: 10px;
+      background: var(--green); color: var(--bg);
+      padding: 4px 10px; border-radius: 4px;
+      font-size: 11px; font-weight: 600;
+      opacity: 0; transition: opacity 0.3s;
+      pointer-events: none;
+    }
+    .saved-flash.show { opacity: 1; }
+  </style>
+</head>
+<body>
+
+  <div class="saved-flash" id="savedFlash">Saved ✓</div>
+
+  <div class="header">
+    <div class="header-icon">CR</div>
+    <h1>Claude Prompt Runner</h1>
+    <span class="version">v1.0</span>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="run">Run</div>
+    <div class="tab" data-tab="prompt">Prompt Template</div>
+    <div class="tab" data-tab="settings">Settings</div>
+  </div>
+
+  <!-- ═══ RUN PANEL ═══ -->
+  <div class="panel active" id="panel-run">
+    <div class="field">
+      <label>Countries / Regions (one per line)</label>
+      <textarea class="countries-input" id="countriesInput" placeholder="Gujarat, India&#10;Karnataka, India&#10;Maharashtra, India&#10;United Kingdom&#10;Dubai, UAE"></textarea>
+    </div>
+
+    <div id="countryQueue" class="country-queue" style="display:none;"></div>
+
+    <div class="btn-row">
+      <button class="btn btn-primary" id="btnStart">
+        ▶ Start Sending Prompts
+      </button>
+      <button class="btn btn-danger btn-small" id="btnStop" style="display:none;">
+        ■ Stop
+      </button>
+    </div>
+  </div>
+
+  <!-- ═══ PROMPT PANEL ═══ -->
+  <div class="panel" id="panel-prompt">
+    <div class="field">
+      <label>Master Prompt Template</label>
+      <textarea class="prompt-input" id="promptInput" placeholder="Paste your full V5 prompt here...&#10;&#10;Use {{COUNTRY_REGION}} as the placeholder — it will be replaced with each country."></textarea>
+      <div class="hint">Use <strong>{{COUNTRY_REGION}}</strong> wherever the geography should be inserted. The prompt is saved automatically.</div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-secondary btn-small" id="btnSavePrompt">Save Prompt</button>
+      <button class="btn btn-secondary btn-small" id="btnClearPrompt">Clear</button>
+    </div>
+    <div class="field" style="margin-top: 12px;">
+      <div class="hint" id="promptStats"></div>
+    </div>
+  </div>
+
+  <!-- ═══ SETTINGS PANEL ═══ -->
+  <div class="panel" id="panel-settings">
+    <div class="field">
+      <div class="field-row">
+        <div>
+          <label>Delay between prompts (seconds)</label>
+          <input type="number" class="delay-input" id="delayInput" value="5" min="5" max="300">
+        </div>
+      </div>
+      <div class="hint">Time to wait after Claude finishes before sending the next country. Helps avoid rate limits on Pro plan.</div>
+    </div>
+    <div class="field">
+      <label>Response detection timeout (seconds)</label>
+      <input type="number" class="delay-input" id="timeoutInput" value="600" min="60" max="1800">
+      <div class="hint">Max time to wait for Claude to finish responding. The V5 prompt with web search can take 3-5 minutes. Default: 600s (10 min).</div>
+    </div>
+    <div class="btn-row">
+      <button class="btn btn-secondary btn-small" id="btnSaveSettings">Save Settings</button>
+    </div>
+  </div>
+
+  <!-- ═══ STATUS BAR ═══ -->
+  <div class="status-bar" id="statusBar">
+    <div id="statusText" class="status-idle">Ready — paste countries and click Start</div>
+    <div class="progress" id="progressSection" style="display:none;">
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill" style="width:0%"></div>
+      </div>
+      <span class="progress-text" id="progressText">0 / 0</span>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
