@@ -19,6 +19,7 @@
       --green: #3fb950;
       --red: #f85149;
       --blue: #58a6ff;
+      --orange: #d29922;
     }
 
     body {
@@ -91,6 +92,7 @@
 
     .countries-input { height: 100px; }
     .prompt-input { height: 180px; font-size: 11px; }
+    .prompt-multi { height: 120px; }
     .delay-input { width: 80px; }
 
     .field { margin-bottom: 14px; }
@@ -128,6 +130,15 @@
       border: 1px solid var(--red);
     }
     .btn-danger:hover { background: rgba(248,81,73,0.1); }
+    .btn-resume {
+      background: var(--green); color: var(--bg);
+    }
+    .btn-resume:hover { background: #2ea043; }
+    .btn-reset {
+      background: transparent; color: var(--orange);
+      border: 1px solid var(--orange);
+    }
+    .btn-reset:hover { background: rgba(210,153,34,0.1); }
     .btn-small { padding: 6px 10px; font-size: 11px; }
 
     .btn-row { display: flex; gap: 8px; margin-top: 14px; }
@@ -143,6 +154,7 @@
     .status-running { color: var(--blue); }
     .status-done { color: var(--green); }
     .status-error { color: var(--red); }
+    .status-paused { color: var(--orange); }
 
     .progress {
       margin-top: 8px; display: flex; align-items: center; gap: 10px;
@@ -160,6 +172,24 @@
       font-size: 11px; color: var(--text-dim); white-space: nowrap;
     }
 
+    /* ── Limit timer ── */
+    .limit-banner {
+      display: none;
+      padding: 10px 18px;
+      background: rgba(210,153,34,0.1);
+      border: 1px solid var(--orange);
+      border-radius: 6px;
+      margin: 10px 0;
+      font-size: 11px;
+      color: var(--orange);
+    }
+    .limit-banner .timer {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 14px;
+      font-weight: 600;
+      margin-top: 4px;
+    }
+
     /* ── Country list in run panel ── */
     .country-queue {
       margin: 10px 0; max-height: 120px; overflow-y: auto;
@@ -173,12 +203,14 @@
     .ci-pending { color: var(--text-dim); }
     .ci-active { color: var(--blue); font-weight: 600; }
     .ci-done { color: var(--green); }
+    .ci-paused { color: var(--orange); font-weight: 600; }
     .ci-dot {
       width: 6px; height: 6px; border-radius: 50%;
       background: var(--text-dim); flex-shrink: 0;
     }
     .ci-active .ci-dot { background: var(--blue); animation: pulse 1s infinite; }
     .ci-done .ci-dot { background: var(--green); }
+    .ci-paused .ci-dot { background: var(--orange); animation: pulse 1.5s infinite; }
 
     @keyframes pulse {
       0%, 100% { opacity: 1; }
@@ -204,7 +236,7 @@
   <div class="header">
     <div class="header-icon">CR</div>
     <h1>Claude Prompt Runner</h1>
-    <span class="version">v1.0</span>
+    <span class="version">v4.0</span>
   </div>
 
   <div class="tabs">
@@ -220,28 +252,35 @@
       <textarea class="countries-input" id="countriesInput" placeholder="Gujarat, India&#10;Karnataka, India&#10;Maharashtra, India&#10;United Kingdom&#10;Dubai, UAE"></textarea>
     </div>
 
+    <div id="limitBanner" class="limit-banner">
+      Session limit hit — auto-resume in:
+      <div class="timer" id="limitTimer">--:--:--</div>
+    </div>
+
     <div id="countryQueue" class="country-queue" style="display:none;"></div>
 
-    <div class="btn-row">
+    <div class="btn-row" id="btnRow">
       <button class="btn btn-primary" id="btnStart">
         ▶ Start Sending Prompts
       </button>
+      <button class="btn btn-resume btn-small" id="btnResume" style="display:none;">
+        ▶ Resume
+      </button>
       <button class="btn btn-danger btn-small" id="btnStop" style="display:none;">
         ■ Stop
+      </button>
+      <button class="btn btn-reset btn-small" id="btnReset" style="display:none;">
+        ↺ Reset
       </button>
     </div>
   </div>
 
   <!-- ═══ PROMPT PANEL ═══ -->
   <div class="panel" id="panel-prompt">
-    <div class="field">
-      <label>Master Prompt Template</label>
-      <textarea class="prompt-input" id="promptInput" placeholder="Paste your full V5 prompt here...&#10;&#10;Use {{COUNTRY_REGION}} as the placeholder — it will be replaced with each country."></textarea>
-      <div class="hint">Use <strong>{{COUNTRY_REGION}}</strong> wherever the geography should be inserted. The prompt is saved automatically.</div>
-    </div>
+    <div id="promptFields"></div>
     <div class="btn-row">
-      <button class="btn btn-secondary btn-small" id="btnSavePrompt">Save Prompt</button>
-      <button class="btn btn-secondary btn-small" id="btnClearPrompt">Clear</button>
+      <button class="btn btn-secondary btn-small" id="btnSavePrompt">Save All Prompts</button>
+      <button class="btn btn-secondary btn-small" id="btnClearPrompt">Clear All</button>
     </div>
     <div class="field" style="margin-top: 12px;">
       <div class="hint" id="promptStats"></div>
@@ -251,18 +290,23 @@
   <!-- ═══ SETTINGS PANEL ═══ -->
   <div class="panel" id="panel-settings">
     <div class="field">
+      <label>Number of prompts per country</label>
+      <input type="number" class="delay-input" id="promptCountInput" value="1" min="1" max="20">
+      <div class="hint">How many sequential prompts to send for each country in the same chat. The Prompt Template tab will show this many text areas.</div>
+    </div>
+    <div class="field">
       <div class="field-row">
         <div>
           <label>Delay between prompts (seconds)</label>
           <input type="number" class="delay-input" id="delayInput" value="5" min="5" max="300">
         </div>
       </div>
-      <div class="hint">Time to wait after Claude finishes before sending the next country. Helps avoid rate limits on Pro plan.</div>
+      <div class="hint">Time to wait after Claude finishes before sending the next prompt/country. Helps avoid rate limits on Pro plan.</div>
     </div>
     <div class="field">
       <label>Response detection timeout (seconds)</label>
       <input type="number" class="delay-input" id="timeoutInput" value="600" min="60" max="1800">
-      <div class="hint">Max time to wait for Claude to finish responding. The V5 prompt with web search can take 3-5 minutes. Default: 600s (10 min).</div>
+      <div class="hint">Max time to wait for Claude to finish responding. Default: 600s (10 min).</div>
     </div>
     <div class="btn-row">
       <button class="btn btn-secondary btn-small" id="btnSaveSettings">Save Settings</button>

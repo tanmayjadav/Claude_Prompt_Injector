@@ -170,6 +170,15 @@ SEARCH PATTERNS: → INDIA: "site:inc42.com [city] algorithmic trading" | "site:
 
 ═════════════════════ PART E — OUTPUT FORMAT: EXCEL WORKBOOK (7 SHEETS, adapted for global use) ═════════════════════
 
+── EXECUTION METHOD ──
+Write the .xlsx file using openpyxl to /mnt/user-data/outputs/ File naming: {geography_slug}_competitor_intelligence_v51.xlsx
+  Example: abu_dhabi_uae_competitor_intelligence_v51.xlsx
+Present the file using present_files tool. DO NOT output any sheet content into chat text.
+The ONLY chat output after the file is a 3-line summary:
+  Line 1: Total companies found (Sheet 1 count)
+  Line 2: Total products found (Sheet 2 count)
+  Line 3: Highest threat entity name + threat level
+
 Deliver a single .xlsx file. Never deliver as text or markdown. All 7 sheets must be present even if empty.
 
 SHEET 1 — 🏢 Local Company Competitors (Track 1) All companies from the 12-source discovery protocol that match geography.
@@ -222,6 +231,8 @@ FORMATTING STANDARDS (unchanged from V5): • Dark navy headers, gold accent tex
 
 #13 — PIPE-SEPARATED = COMBINED SCOPE (V5.1 NEW) When the geography contains a pipe separator (e.g., "Wyoming | Delaware, United States"), treat BOTH regions as a single combined geographic scope. Run all 12 sources for BOTH regions. Combine results into unified sheets. Tag each result with its source region in Column C of Sheet 1. Do not produce two separate reports.
 
+#14 — SKILL FILE MANDATORY (V5.2 NEW) Before writing the .xlsx file, read /mnt/skills/public/xlsx/SKILL.md and follow its patterns for openpyxl usage, formatting, and file output. This step cannot be skipped.
+
 ═════════════════ PART G — PRE-LOADED CONTEXT: CAMEL FINANCE / VARIANCE TECHNOLOGIES ════════════════
 
 ── TWO-TRACK SEARCH DEFINITION FOR THIS BUSINESS ──
@@ -256,16 +267,11 @@ Algofin / SpeedBot | CIN U72900GJ2022PTC136753 | Ahmedabad | 2022
 
 ── WHAT TO FOCUS NEW PRODUCT RESEARCH ON (any geography) ── • TradingView: search "cycle low indicator", "DCL WCL YCL", "market cycle Bitcoin" → find invite-only protected scripts from the stated geography's authors • YouTube: any channel from stated geography teaching cycle trading methodology AND selling a TradingView indicator or signal subscription • Whop / Gumroad: any trading indicator product sold from stated geography • Regulated financial advisers in stated geography offering signal products (use correct country regulator from Country Adaptation Table) • Any Instagram/Telegram trading signal account from stated geography with a paid product or subscription link
 
---------DO NOT ASK ANY FOLLOW UP QUESTIONS, JUST RETURN EXCEL OUTPUT---------
-
-When you inject a geography, the prompt:
-
-AUTO-DETECTS the country ("United States")
-SELECTS the correct sources (SEC EDGAR, state SOS, Crunchbase, Built In, etc.)
-SELECTS the correct codes (NAICS instead of NIC)
-SELECTS the correct regulator (SEC/FINRA instead of SEBI)
-USES the correct currency (USD instead of INR)
-SEARCHES the correct news sources (TechCrunch / Built In [City])
-For pipe-separated: TREATS BOTH as one combined scope
-No manual edits needed. Just inject the geography line and run.
-.
+──────── EXECUTION MODE — NON-NEGOTIABLE ────────
+1. Read /mnt/skills/public/xlsx/SKILL.md
+2. Execute all searches (max 25)
+3. Write .xlsx to /mnt/user-data/outputs/ using openpyxl
+4. Present file via present_files tool
+5. Output 3-line summary only
+NO planning text. NO mid-run updates. NO JSON. NO markdown tables.
+The ONLY deliverable is the .xlsx file + 3-line summary..

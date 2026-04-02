@@ -1,51 +1,129 @@
 // ═══════════════════════════════════════════════════════════════
-// CONTENT.JS — Claude Prompt Runner v2.2
+// CONTENT.JS — Claude Prompt Runner v4.0
+// Features: multi-prompt, session limit detection, download click,
+//           persistent progress with resume
 // ═══════════════════════════════════════════════════════════════
 
 let isRunning  = false;
 let shouldStop = false;
 
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg.action === 'START_RUN') startRun(msg.data);
-  if (msg.action === 'STOP_RUN') { shouldStop = true; isRunning = false; }
+  if (msg.action === 'START_RUN')  startRun(msg.data, 0, 0);
+  if (msg.action === 'RESUME_RUN') resumeRun(msg.data);
+  if (msg.action === 'STOP_RUN')   { shouldStop = true; isRunning = false; }
 });
+
+// ─────────────────────────────────────────────────────────────
+// RESUME — picks up from saved position
+// ─────────────────────────────────────────────────────────────
+
+async function resumeRun(data) {
+  const startCountry = data.currentIndex || 0;
+  const startPrompt  = data.currentPromptIndex || 0;
+  log(`Resuming from country ${startCountry}, prompt ${startPrompt}`);
+  startRun(data, startCountry, startPrompt);
+}
 
 // ─────────────────────────────────────────────────────────────
 // MAIN LOOP
 // ─────────────────────────────────────────────────────────────
 
-async function startRun({ countries, prompt, delay, timeout }) {
+async function startRun({ countries, prompts, prompt, delay, timeout }, fromCountry, fromPrompt) {
   if (isRunning) return;
   isRunning  = true;
   shouldStop = false;
 
-  for (let i = 0; i < countries.length; i++) {
+  const promptList = prompts && prompts.length ? prompts : [prompt];
+
+  for (let i = fromCountry; i < countries.length; i++) {
     if (shouldStop) break;
 
-    const country     = countries[i];
-    const finalPrompt = prompt.replaceAll('{{COUNTRY_REGION}}', country);
+    // Check session limit BEFORE sending any prompt
+    if (detectSessionLimit()) {
+      log('Session limit detected before sending — pausing');
+      await handleSessionLimit(i, 0, countries, promptList, delay, timeout);
+      return;
+    }
+
+    const country = countries[i];
+    const pStart  = (i === fromCountry) ? fromPrompt : 0;
 
     notify('COUNTRY_STARTED', { country, index: i });
-    log(`▶ ${i+1}/${countries.length}: ${country}`);
+    log(`▶ ${i+1}/${countries.length}: ${country} (${promptList.length} prompt${promptList.length > 1 ? 's' : ''})`);
 
-    // 1. Find editor
-    const editor = await poll(() => findEditor(), 15000);
-    if (!editor) return fail('Editor not found. Are you on a claude.ai page?');
+    for (let p = pStart; p < promptList.length; p++) {
+      if (shouldStop) break;
 
-    // 2. Inject prompt
-    const injected = await inject(editor, finalPrompt);
-    if (!injected) return fail('Could not inject text into editor.');
+      // Check session limit before each prompt
+      if (detectSessionLimit()) {
+        log(`Session limit detected before prompt ${p+1} — pausing`);
+        await handleSessionLimit(i, p, countries, promptList, delay, timeout);
+        return;
+      }
 
-    // 3. Send — clipboard paste worked, now we need to actually send
-    notify('COUNTRY_WAITING', { country, index: i });
-    const sent = await send(editor);
-    if (!sent) return fail('Could not send message.');
+      const rawPrompt   = promptList[p];
+      const finalPrompt = rawPrompt.replaceAll('{{COUNTRY_REGION}}', country);
 
-    // 4. Wait for URL to settle (/new → /chat/xxx)
-    await settleUrl();
+      notify('PROMPT_STARTED', { country, index: i, promptIndex: p });
+      log(`  prompt ${p+1}/${promptList.length}`);
 
-    // 5. Wait for full response, auto-clicking Continue
-    await waitDone(timeout, country);
+      // Save progress
+      await saveProgress(i, p, 'running', countries, promptList, delay, timeout);
+
+      // 1. Find editor
+      const editor = await poll(() => findEditor(), 15000);
+      if (!editor) return fail('Editor not found. Are you on a claude.ai page?');
+
+      // 2. Inject prompt
+      const injected = await inject(editor, finalPrompt);
+      if (!injected) return fail(`Could not inject prompt ${p+1} into editor.`);
+
+      // 3. Send
+      notify('COUNTRY_WAITING', { country, index: i });
+      const sent = await send(editor);
+      if (!sent) return fail(`Could not send prompt ${p+1}.`);
+
+      // 4. Wait for URL to settle (only first prompt on /new)
+      if (i === fromCountry && p === pStart && location.pathname.includes('/new')) {
+        await settleUrl();
+      }
+
+      // 5. Wait for full response, auto-clicking Continue
+      const waitResult = await waitDone(timeout, country);
+
+      // Check if limit was hit during generation
+      if (waitResult === 'limit') {
+        log(`Session limit hit during response — pausing after prompt ${p+1}`);
+        // This prompt's response may be incomplete, retry it
+        await handleSessionLimit(i, p, countries, promptList, delay, timeout);
+        return;
+      }
+
+      log(`  ✓ prompt ${p+1} done`);
+
+      // Save progress with NEXT prompt index so resume skips this completed prompt
+      const nextP = p + 1;
+      if (nextP < promptList.length) {
+        await saveProgress(i, nextP, 'running', countries, promptList, delay, timeout);
+      }
+
+      // 6. Check for and click Download button
+      await tryClickDownload();
+
+      // Small delay between prompts within the same country
+      if (p < promptList.length - 1 && !shouldStop) {
+        await sleep(2000);
+      }
+    }
+
+    // If stopped mid-country, save current position and DON'T mark country as done
+    if (shouldStop) {
+      log(`Stopped during: ${country}`);
+      break;
+    }
+
+    // Save progress — country done
+    await saveProgress(i + 1, 0, 'running', countries, promptList, delay, timeout);
 
     notify('COUNTRY_DONE', { country, index: i });
     log(`✓ Done: ${country}`);
@@ -56,7 +134,10 @@ async function startRun({ countries, prompt, delay, timeout }) {
     }
   }
 
-  if (!shouldStop) notify('ALL_DONE', { total: countries.length });
+  if (!shouldStop) {
+    await saveProgress(countries.length, 0, 'completed', countries, promptList, delay, timeout);
+    notify('ALL_DONE', { total: countries.length });
+  }
   isRunning = false;
 }
 
@@ -67,17 +148,116 @@ function fail(msg) {
 }
 
 // ─────────────────────────────────────────────────────────────
+// PROGRESS PERSISTENCE
+// ─────────────────────────────────────────────────────────────
+
+function saveProgress(countryIdx, promptIdx, status, countries, prompts, delay, timeout) {
+  return new Promise(resolve => {
+    const state = {
+      running: status === 'running',
+      status,
+      countries,
+      prompts,
+      currentIndex: countryIdx,
+      currentPromptIndex: promptIdx,
+      promptCount: prompts.length,
+      delay,
+      timeout,
+    };
+    chrome.storage.local.set({ runState: state }, resolve);
+  });
+}
+
+// ─────────────────────────────────────────────────────────────
+// SESSION LIMIT DETECTION
+// Looks for "used X% of your session limit" where X >= 90
+// ─────────────────────────────────────────────────────────────
+
+function detectSessionLimit() {
+  // Check the alert band near chat input
+  const alertBand = document.querySelector('[data-alert-band-wrapper]');
+  if (alertBand) {
+    const text = alertBand.textContent || '';
+    const match = text.match(/used\s+(\d+)%\s+of\s+your\s+(?:session\s+)?limit/i);
+    if (match) {
+      const pct = parseInt(match[1]);
+      if (pct >= 90) {
+        log(`Session limit detected: ${pct}%`);
+        return true;
+      }
+    }
+  }
+
+  // Also check for any visible limit-related banners across the page
+  const allText = document.body.innerText || '';
+  // "You've used 90% of your session limit" or "100%"
+  const globalMatch = allText.match(/used\s+(\d+)%\s+of\s+your\s+(?:session\s+)?limit/i);
+  if (globalMatch) {
+    const pct = parseInt(globalMatch[1]);
+    if (pct >= 90) {
+      log(`Session limit detected (global scan): ${pct}%`);
+      return true;
+    }
+  }
+
+  return false;
+}
+
+async function handleSessionLimit(countryIdx, promptIdx, countries, prompts, delay, timeout) {
+  shouldStop = true;
+  isRunning  = false;
+
+  // Save paused state
+  await saveProgress(countryIdx, promptIdx, 'paused_limit', countries, prompts, delay, timeout);
+
+  // Tell background to set 5hr alarm
+  try {
+    chrome.runtime.sendMessage({ action: 'SET_LIMIT_ALARM' }).catch(() => {});
+  } catch (_) {}
+
+  notify('SESSION_LIMIT_HIT', {
+    countryIndex: countryIdx,
+    promptIndex: promptIdx,
+    country: countries[countryIdx],
+  });
+
+  log('Session limit — 5hr timer started. Will auto-resume.');
+}
+
+// ─────────────────────────────────────────────────────────────
+// DOWNLOAD BUTTON — click if present after response
+// ─────────────────────────────────────────────────────────────
+
+async function tryClickDownload() {
+  // Poll for download button for up to 10 seconds
+  const dlBtn = await poll(() => {
+    const btn = document.querySelector('button[aria-label="Download"]');
+    if (btn && isVisible(btn) && !btn.disabled) return btn;
+    return null;
+  }, 10000, 500);
+
+  if (dlBtn) {
+    log('Download button found — clicking');
+    for (const t of ['mousedown', 'mouseup', 'click']) {
+      dlBtn.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
+    }
+    await sleep(1500);
+    log('Download clicked');
+  } else {
+    log('No download button found — skipping');
+  }
+}
+
+// ─────────────────────────────────────────────────────────────
 // EDITOR
 // ─────────────────────────────────────────────────────────────
 
 function findEditor() {
-  // data-testid="chat-input" is the most reliable selector from the real DOM
   const byTestId = document.querySelector('[data-testid="chat-input"]');
   if (byTestId) {
     const r = byTestId.getBoundingClientRect();
     if (r.width > 0) return byTestId;
   }
-  // Fallbacks
   for (const sel of [
     'div.tiptap.ProseMirror[contenteditable="true"]',
     'div.ProseMirror[contenteditable="true"]',
@@ -98,7 +278,7 @@ function findEditor() {
 // ─────────────────────────────────────────────────────────────
 
 async function inject(editor, text) {
-  // Method A: clipboard write → paste (Chrome-safe, works across CSP)
+  // Method A: clipboard write → paste
   try {
     window.focus();
     editor.click();
@@ -144,20 +324,11 @@ async function inject(editor, text) {
 
 // ─────────────────────────────────────────────────────────────
 // SEND
-// Real DOM analysis shows:
-//   - On /new page: send button is type="submit" (suggestion chips area)
-//   - On /chat page: send button is type="button", appears after content
-//   - Voice mode button is always present as type="button"
-//   - Send button has NO aria-label in some builds, or "Send message" in others
-// Strategy: find button by position (last button in input row after voice btn)
-// Fallback: Enter key via KeyboardEvent on the editor element
 // ─────────────────────────────────────────────────────────────
 
 async function send(editor) {
-  // Wait a bit for React to re-render after inject
   await sleep(300);
 
-  // Try button first
   const btn = await poll(() => findSendButton(), 6000);
   if (btn) {
     log('Send button found: ' + (btn.getAttribute('aria-label') || btn.className.slice(0,50)));
@@ -168,29 +339,20 @@ async function send(editor) {
     if (wasSent(editor)) { log('Sent via button'); return true; }
   }
 
-  // Fallback: Enter key — must be dispatched on the editor with correct props
-  // Claude intercepts Enter to submit (not newline) when no shift key
   log('Trying Enter key fallback…');
   editor.focus();
   await sleep(100);
 
   const enter = new KeyboardEvent('keydown', {
-    bubbles: true,
-    cancelable: true,
-    key: 'Enter',
-    code: 'Enter',
-    keyCode: 13,
-    which: 13,
-    shiftKey: false,
-    ctrlKey: false,
-    metaKey: false,
+    bubbles: true, cancelable: true,
+    key: 'Enter', code: 'Enter', keyCode: 13, which: 13,
+    shiftKey: false, ctrlKey: false, metaKey: false,
   });
   editor.dispatchEvent(enter);
   await sleep(600);
 
   if (wasSent(editor)) { log('Sent via Enter'); return true; }
 
-  // Last resort: click any visible button near bottom-right of input area
   log('Trying positional button search…');
   const anyBtn = findButtonByPosition();
   if (anyBtn) {
@@ -204,13 +366,11 @@ async function send(editor) {
 }
 
 function findSendButton() {
-  // Strategy 1: aria-label Send variants
   for (const label of ['Send message', 'Send Message', 'Send']) {
     const b = document.querySelector(`button[aria-label="${label}"]`);
     if (b && !b.disabled && isVisible(b)) return b;
   }
 
-  // Strategy 2: type=submit icon-only button in fieldset (new chat page)
   const fs = document.querySelector('fieldset');
   if (fs) {
     const submits = [...fs.querySelectorAll('button[type="submit"]')]
@@ -218,15 +378,12 @@ function findSendButton() {
     if (submits.length) return submits[submits.length - 1];
   }
 
-  // Strategy 3: last visible SVG-icon-only button inside the input box area
-  // The input container has class including "rounded-[20px]"
   const inputBox = document.querySelector('[class*="rounded-[20px]"]') ||
                    document.querySelector('[class*="chat-input"]') ||
                    document.querySelector('fieldset');
   if (inputBox) {
     const btns = [...inputBox.querySelectorAll('button')]
       .filter(b => !b.disabled && isVisible(b) && b.querySelector('svg') && b.innerText.trim() === '');
-    // The send button is the LAST one (voice mode is second-to-last usually)
     if (btns.length > 0) return btns[btns.length - 1];
   }
 
@@ -234,14 +391,12 @@ function findSendButton() {
 }
 
 function findButtonByPosition() {
-  // Find all visible buttons, get the one closest to bottom-right of viewport
   const allBtns = [...document.querySelectorAll('button')]
     .filter(b => isVisible(b) && !b.disabled);
 
   let best = null, bestScore = -1;
   for (const b of allBtns) {
     const r = b.getBoundingClientRect();
-    // Score = bottom + right (higher = closer to bottom-right)
     const score = r.bottom + r.right;
     if (score > bestScore) { bestScore = score; best = b; }
   }
@@ -259,16 +414,12 @@ function wasSent(editor) {
 
 // ─────────────────────────────────────────────────────────────
 // WAIT FOR FULL RESPONSE — auto-clicks Continue
+// Returns 'done' or 'limit'
 // ─────────────────────────────────────────────────────────────
 
 const CONTINUE_POLL_TOTAL_MS = 7000;
 const CONTINUE_POLL_INTERVAL_MS = 250;
 
-/**
- * After isGenerating() goes false, the Continue control may mount a few hundred
- * ms later. Poll for it while re-checking isGenerating() so we don't declare
- * "done" early or miss a late Continue.
- */
 async function pollForContinueButton() {
   const end = Date.now() + CONTINUE_POLL_TOTAL_MS;
   while (Date.now() < end) {
@@ -285,18 +436,24 @@ async function pollForContinueButton() {
 async function waitDone(timeoutSec, country) {
   const deadline = Date.now() + timeoutSec * 1000;
 
-  // Wait up to 30s for generation to START
   const started = await poll(() => isGenerating() ? true : null, 30000);
-  if (!started) { await sleep(2000); return; }
+  if (!started) { await sleep(2000); return 'done'; }
 
   while (Date.now() < deadline) {
-    if (shouldStop) return;
+    if (shouldStop) return 'done';
+
+    // Check for session limit during generation
+    if (detectSessionLimit()) return 'limit';
+
     if (isGenerating()) { await sleep(800); continue; }
 
-    // Stopped — brief settle, then poll for Continue (avoids race with slow mount)
     await sleep(400);
+
+    // Re-check limit after generation stops
+    if (detectSessionLimit()) return 'limit';
+
     const phase = await pollForContinueButton();
-    if (phase.kind === 'stop') return;
+    if (phase.kind === 'stop') return 'done';
     if (phase.kind === 'resume') continue;
     if (phase.kind === 'continue') {
       log('Clicking Continue…');
@@ -309,12 +466,12 @@ async function waitDone(timeoutSec, country) {
       continue;
     }
 
-    // Truly done
     await sleep(1200);
     log('Response complete');
-    return;
+    return 'done';
   }
   log('Timeout');
+  return 'done';
 }
 
 function isGenerating() {
@@ -339,7 +496,6 @@ function looksLikeContinueLabel(s) {
   return t === 'continue' || t.startsWith('continue ') || t.startsWith('continue,');
 }
 
-/** Claude renders assistant prose + tool rows inside `.font-claude-response`; Continue often mounts there or in the gap before the next user bubble. */
 function continueSearchRoots() {
   const roots = [];
   const responses = [...document.querySelectorAll('.font-claude-response')].filter((el) => {
@@ -349,12 +505,21 @@ function continueSearchRoots() {
   if (!responses.length) return roots;
 
   const last = responses[responses.length - 1];
+  const parent = last.parentElement;
+  if (parent) {
+    const directWarn = parent.querySelector(':scope > [data-testid="message-warning"]');
+    if (directWarn) roots.push(directWarn);
+    const nestedWarn = parent.querySelector('[data-testid="message-warning"]');
+    if (nestedWarn && nestedWarn !== directWarn) roots.push(nestedWarn);
+  }
+
   roots.push(last);
 
   let sib = last.nextElementSibling;
   for (let i = 0; sib && i < 12; i++, sib = sib.nextElementSibling) {
     if (sib.matches?.('[data-test-render-count]')) break;
     if (sib.querySelector?.('[data-testid="user-message"]')) break;
+    if (roots.includes(sib)) continue;
     roots.push(sib);
   }
   return roots;
@@ -381,9 +546,21 @@ function findContinueInRoot(root) {
     if (b.disabled || !isVisible(b)) continue;
     const lbl = b.getAttribute('aria-label') || '';
     if (looksLikeContinueLabel(lbl)) return b;
-
     const txt = (b.innerText || '').replace(/\s+/g, ' ').trim();
     if (looksLikeContinueLabel(txt)) return b;
+  }
+  return null;
+}
+
+function findContinueInMessageWarnings() {
+  const banners = [...document.querySelectorAll('[data-testid="message-warning"]')].filter(isVisible);
+  for (let i = banners.length - 1; i >= 0; i--) {
+    const root = banners[i];
+    for (const b of root.querySelectorAll('button')) {
+      if (b.disabled || !isVisible(b)) continue;
+      const txt = (b.innerText || '').replace(/\s+/g, ' ').trim();
+      if (looksLikeContinueLabel(txt) || looksLikeContinueLabel(b.getAttribute('aria-label') || '')) return b;
+    }
   }
   return null;
 }
@@ -394,7 +571,9 @@ function findContinue() {
     if (hit) return hit;
   }
 
-  // Portals / outside last response — keep global fallback
+  const warnBtn = findContinueInMessageWarnings();
+  if (warnBtn) return warnBtn;
+
   for (const sel of ['button[data-testid="continue-button"]', 'button[data-testid="message-continue"]']) {
     for (const b of document.querySelectorAll(sel)) {
       if (b.disabled || !isVisible(b)) continue;
@@ -413,7 +592,6 @@ function findContinue() {
     if (b.disabled || !isVisible(b)) continue;
     const lbl = b.getAttribute('aria-label') || '';
     if (looksLikeContinueLabel(lbl)) return b;
-
     const txt = (b.innerText || '').replace(/\s+/g, ' ').trim();
     if (looksLikeContinueLabel(txt)) return b;
   }
@@ -458,7 +636,6 @@ function poll(fn, timeoutMs, interval = 100) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 function log(msg)  { console.log('[CPR]', msg); }
 
-// Fire-and-forget — closed popup must NOT crash the loop
 function notify(action, extra) {
   try { chrome.runtime.sendMessage({ action, ...extra }).catch(() => {}); } catch(_) {}
 }
