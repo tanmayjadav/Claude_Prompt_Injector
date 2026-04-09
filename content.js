@@ -7,6 +7,7 @@
 let isRunning  = false;
 let shouldStop = false;
 let sessionDownloadedHashes = new Set(); // Track downloads in current session only
+let clickedButtonRefs = new WeakSet(); // Backup for data-cpr-downloaded (survives DOM attr loss)
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   if (msg.action === 'START_RUN')  startRun(msg.data, 0, 0);
@@ -37,6 +38,7 @@ async function resumeRun(data) {
 function clearDownloadTracking() {
   // Clear only current session's tracking
   sessionDownloadedHashes.clear();
+  clickedButtonRefs = new WeakSet();
   log('Cleared session download tracking');
 }
 
@@ -332,13 +334,15 @@ function findTextDownloadButtons(root) {
 function markExistingDownloadButtons() {
   // Mark all currently visible download buttons so they are excluded
   // when we later search for NEW download buttons after the next response.
-  // Mark BOTH variants so neither leaks through next time.
+  // Mark BOTH variants (aria + text) and use BOTH the DOM attribute and
+  // the WeakSet ref so a React re-render losing the attr can't unmark it.
   let count = 0;
   const all = [...findAriaDownloadButtons(document), ...findTextDownloadButtons(document)];
   for (const btn of all) {
-    if (btn.hasAttribute('data-cpr-downloaded')) continue;
+    if (isAlreadyClicked(btn)) continue;
     if (isVisible(btn)) {
       btn.setAttribute('data-cpr-downloaded', 'true');
+      clickedButtonRefs.add(btn);
       count++;
     }
   }
@@ -355,22 +359,29 @@ function getLastResponseContainer() {
 
   const lastResponse = responses[responses.length - 1];
 
-  // Walk up to find the response's top-level message container
-  // Look for the nearest data-test-render-count ancestor or the
-  // parent group that wraps the entire message turn
+  // Walk up looking for the message-turn container, but STOP as soon as
+  // an ancestor would contain more than one .font-claude-response — that
+  // means we've crossed into a parent that holds previous turns too.
   let container = lastResponse;
-  for (let el = lastResponse; el && el !== document.body; el = el.parentElement) {
+  for (let el = lastResponse.parentElement; el && el !== document.body; el = el.parentElement) {
     if (el.hasAttribute('data-test-render-count')) { container = el; break; }
-    // Also check for the group wrapper that holds the full response turn
-    if (el.classList.contains('group') && el.querySelector('.font-claude-response')) {
-      container = el;
+    const responsesInside = el.querySelectorAll('.font-claude-response').length;
+    if (responsesInside > 1) break; // crossed into prior turns - stop expanding
+    container = el;
+    if (el.classList.contains('group')) {
+      // typical message-turn wrapper - good stopping point
+      break;
     }
   }
   return container;
 }
 
+function isAlreadyClicked(b) {
+  return b.hasAttribute('data-cpr-downloaded') || clickedButtonRefs.has(b);
+}
+
 function pickClickable(btns) {
-  return btns.filter(b => isVisible(b) && !b.disabled && !b.hasAttribute('data-cpr-downloaded'));
+  return btns.filter(b => isVisible(b) && !b.disabled && !isAlreadyClicked(b));
 }
 
 function getDownloadButtonsInContainer(container) {
@@ -437,14 +448,15 @@ async function tryClickDownload() {
     for (let i = 0; i < dlBtns.length; i++) {
       const btn = dlBtns[i];
       // Safety: skip if already marked (race condition guard)
-      if (btn.hasAttribute('data-cpr-downloaded')) continue;
+      if (isAlreadyClicked(btn)) continue;
 
       log(`  [${i+1}/${dlBtns.length}] Clicking download button`);
       for (const t of ['mousedown', 'mouseup', 'click']) {
         btn.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true, view: window }));
       }
-      // Mark button as clicked so it won't be clicked again
+      // Mark via attribute AND WeakSet ref so re-renders can't unmark it
       btn.setAttribute('data-cpr-downloaded', 'true');
+      clickedButtonRefs.add(btn);
       clickedCount++;
       // Delay between clicks to allow download to initiate
       if (i < dlBtns.length - 1) {
