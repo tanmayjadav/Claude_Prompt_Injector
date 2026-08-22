@@ -30,3 +30,7 @@ prompt_Excel.txt
 prompt_json.txt
 Elem*.txt
 Consol-referen.txt
+
+.gitignore
+saa*.txt
+

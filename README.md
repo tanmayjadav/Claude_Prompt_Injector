@@ -119,3 +119,27 @@ If the extension breaks after a Claude UI update, open `content.js` and update t
 3. **Stop button selectors** (~line 225): `stopSelectors` array — the button that appears while Claude is generating
 
 Use Chrome DevTools (F12) on claude.ai to inspect the current elements and find the right selectors.
+
+---
+
+## Overnight batch research (SaaS list)
+
+Use case: paste N product names, walk away, read the answers in the morning.
+
+1. **Prompt Template tab** → paste `saas_research_prompt.txt` (1 prompt, uses `{{VARIABLE}}`).
+2. **Run tab** → paste `saas_140.txt` (139 products, `Name (url)` per line).
+3. **Settings**: delay `30`s, timeout `600`s, Discord webhook set (you get pinged on session limit, run finish, and run failure).
+4. Leave the download checkboxes OFF — research answers are text, not Excel. The runner just skips.
+5. Open a new claude.ai chat, hit **Start**, leave the tab visible and the machine awake.
+
+Session limits pause the run and auto-resume via the background alarm — no babysitting.
+
+`saas_140.txt` is generated from `XReddit Scrapper/details.csv`:
+
+```
+python -c "import csv;rows=list(csv.DictReader(open('details.csv',encoding='utf-8')));open('saas_140.txt','w',encoding='utf-8').write('\n'.join(f\"{r['name']} ({r['website']})\" for r in rows if r['name']))"
+```
+
+### Known ceiling
+
+All items go into **one** chat thread. claude.ai caps conversation length — expect the thread to fill up well before item 139, at which point the run stalls. Workaround today: open a fresh chat and press **Resume** (progress is saved per item). Fix: new-chat-per-item.

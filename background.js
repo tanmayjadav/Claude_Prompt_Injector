@@ -132,6 +132,16 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     return true;
   }
 
+  if (msg.action === 'ALL_DONE') {
+    sendDiscordNotification(`[Claude Prompt Runner] Run complete — ${msg.total} items done.`);
+    return true;
+  }
+
+  if (msg.action === 'RUN_ERROR') {
+    sendDiscordNotification(`[Claude Prompt Runner] Run stopped: ${msg.error}`);
+    return true;
+  }
+
   if (msg.action === 'NO_DOWNLOAD_BUTTON') {
     const promptInfo = msg.promptIndex != null ? ` (prompt ${msg.promptIndex + 1})` : '';
     sendDiscordNotification(`[Claude Prompt Runner] No download button found for "${msg.country}"${promptInfo} — default prompt sent.`);

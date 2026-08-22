@@ -123,7 +123,18 @@ async function startRun({ countries, prompts, prompt, delay, timeout }, fromCoun
       }
 
       // 5. Wait for full response, auto-clicking Continue
-      const waitResult = await waitDone(timeout, country);
+      let waitResult = await waitDone(timeout, country);
+
+      // Send silently failed (editor cleared but nothing generated) — re-send once
+      if (waitResult === 'nostart') {
+        log('  no response started — re-sending once');
+        const ed2 = await poll(() => findEditor(), 15000);
+        if (ed2 && await inject(ed2, finalPrompt)) await send(ed2);
+        waitResult = await waitDone(timeout, country);
+        if (waitResult === 'nostart') {
+          return fail(`No response from Claude for "${country}" (prompt ${p + 1}) — run stopped`);
+        }
+      }
 
       // Check if limit was hit during generation
       if (waitResult === 'limit') {
@@ -733,7 +744,7 @@ function wasSent(editor) {
 
 // ─────────────────────────────────────────────────────────────
 // WAIT FOR FULL RESPONSE — auto-clicks Continue
-// Returns 'done' or 'limit'
+// Returns 'done', 'limit', or 'nostart' (generation never began)
 // ─────────────────────────────────────────────────────────────
 
 const CONTINUE_POLL_TOTAL_MS = 7000;
@@ -756,7 +767,7 @@ async function waitDone(timeoutSec, country) {
   const deadline = Date.now() + timeoutSec * 1000;
 
   const started = await poll(() => isGenerating() ? true : null, 30000);
-  if (!started) { await sleep(2000); return 'done'; }
+  if (!started) { await sleep(2000); return 'nostart'; }
 
   while (Date.now() < deadline) {
     if (shouldStop) return 'done';
